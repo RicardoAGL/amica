@@ -198,7 +198,7 @@ Embed Amica and a live file panel side-by-side with 50% CSS zoom
 
 | Symptom | Fix |
 |---|---|
-| Avatar replies in a sassy/feisty character | Bridge is using old code; restart: `pkill -f amica-bridge && uv run scripts/amica-bridge.py &` |
+| Avatar replies in a sassy/feisty character | Bridge is using old code; restart: `kill $(lsof -ti :8101) 2>/dev/null; uv run scripts/amica-bridge.py &` |
 | "claude CLI not found" in chat | `which claude` must return a path; re-login to Claude Code |
 | No TTS / silent avatar | Check Amica settings → TTS backend; SpeechT5 needs the speaker embedding URL set |
 | Bridge 500 errors | Check `AMICA_ALLOWED_TOOLS` — tool names are comma-separated, no spaces |

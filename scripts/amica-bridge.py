@@ -143,6 +143,9 @@ async def _claude_stream(prompt: str):
         yield b"data: [DONE]\n\n"
         return
 
+    # Drain stderr concurrently — without this, a full stderr pipe buffer deadlocks
+    # stdout reads (pipe-buffer deadlock). We discard stderr here; it goes to uvicorn logs.
+    stderr_drain = asyncio.create_task(proc.stderr.read())
     try:
         while True:
             chunk = await asyncio.wait_for(proc.stdout.read(256), timeout=_TIMEOUT)
@@ -157,6 +160,8 @@ async def _claude_stream(prompt: str):
         yield _sse(_chunk({"content": "\n[response timed out]"}, "stop"))
     except Exception as exc:
         yield _sse(_chunk({"content": f"\n[bridge error: {exc}]"}, "stop"))
+    finally:
+        stderr_drain.cancel()
 
     yield _sse(_chunk({}, "stop"))
     yield b"data: [DONE]\n\n"
