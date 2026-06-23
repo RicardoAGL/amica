@@ -5,7 +5,7 @@ import { handleConfig, handleSubconscious } from "@/features/externalAPI/externa
 
 import { generateSessionId, sendError, apiLogEntry, ApiResponse } from "@/features/externalAPI/utils/apiHelper";
 import { requestMemory, requestLogs, requestUserInputMessages, requestChatHistory } from "@/features/externalAPI/utils/requestHandler";
-import { processNormalChat, triggerAmicaActions, updateSystemPrompt } from "@/features/externalAPI/processors/chatProcessor";
+import { processNormalChat, triggerAmicaActions, updateSystemPrompt, speakDirect } from "@/features/externalAPI/processors/chatProcessor";
 
 export const apiLogs: apiLogEntry[] = [];
 export const sseClients: Array<{ res: NextApiResponse }> = [];
@@ -63,6 +63,9 @@ const processRequest = async (inputType: string, payload: any) => {
       return { response: await requestChatHistory(), outputType: "Chat History" };
     case "Reasoning Server":
       return { response: await triggerAmicaActions(payload), outputType: "Actions" };
+    case "Speak Direct":
+      speakDirect(payload);
+      return { response: "speaking", outputType: "Speak" };
     default:
       throw new Error("Invalid input type");
   }
