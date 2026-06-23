@@ -49,7 +49,7 @@ echo ""
 # Start code-server (VS Code in browser) for the live draft panel
 echo "Starting code-server on :3002..."
 code-server \
-  --port 3002 \
+  --bind-addr 127.0.0.1:3002 \
   --auth none \
   ~/Desktop/github/xebia-blog &
 CODE_PID=$!
