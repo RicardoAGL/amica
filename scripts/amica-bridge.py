@@ -44,7 +44,7 @@ _PORT = int(os.environ.get("AMICA_BRIDGE_PORT", "8101"))
 _HOST = os.environ.get("AMICA_BRIDGE_HOST", "127.0.0.1")
 # Restrict tool surface: writing tasks need Read/Write/Edit/WebFetch.
 # Bash and Computer excluded — no shell execution via voice input.
-_ALLOWED_TOOLS = os.environ.get("AMICA_ALLOWED_TOOLS", "Read,Write,Edit,WebFetch")
+_ALLOWED_TOOLS = os.environ.get("AMICA_ALLOWED_TOOLS", "Read,Write,Edit")
 
 # System prompt injected before every conversation
 _SYSTEM = os.environ.get(
