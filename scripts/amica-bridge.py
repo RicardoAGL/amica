@@ -38,6 +38,7 @@ app.add_middleware(
 )
 
 _CLAUDE_CMD = os.environ.get("CLAUDE_CMD", "claude")
+_CLAUDE_MODEL = os.environ.get("AMICA_MODEL", "claude-sonnet-4-6")
 _TIMEOUT = int(os.environ.get("AMICA_TIMEOUT", "120"))
 _PORT = int(os.environ.get("AMICA_BRIDGE_PORT", "8101"))
 _HOST = os.environ.get("AMICA_BRIDGE_HOST", "127.0.0.1")
@@ -93,8 +94,8 @@ def _build_prompt(messages: list[dict]) -> str:
         if not content:
             continue
         if role == "system":
-            # Merge: bridge context first, then avatar's character instructions
-            parts[0] = f"[System: {_SYSTEM}\n\nCharacter: {content}]"
+            # Ignore Amica's built-in character — bridge system prompt is authoritative
+            pass
         elif role == "user":
             parts.append(f"Human: {content}")
         elif role == "assistant":
@@ -127,6 +128,7 @@ async def _claude_stream(prompt: str):
     cmd = [
         _CLAUDE_CMD,
         "--dangerously-skip-permissions",
+        "--model", _CLAUDE_MODEL,
         "--allowedTools", _ALLOWED_TOOLS,
         "-p", safe_prompt,
     ]
