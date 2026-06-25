@@ -21,6 +21,7 @@ import asyncio
 import json
 import os
 import time
+import urllib.request
 from uuid import uuid4
 
 import uvicorn
@@ -42,9 +43,16 @@ _CLAUDE_MODEL = os.environ.get("AMICA_MODEL", "claude-sonnet-4-6")
 _TIMEOUT = int(os.environ.get("AMICA_TIMEOUT", "120"))
 _PORT = int(os.environ.get("AMICA_BRIDGE_PORT", "8101"))
 _HOST = os.environ.get("AMICA_BRIDGE_HOST", "127.0.0.1")
-# Restrict tool surface: writing tasks need Read/Write/Edit/WebFetch.
-# Bash and Computer excluded — no shell execution via voice input.
+# Restrict tool surface: Bash and Computer excluded — no shell execution via voice input.
 _ALLOWED_TOOLS = os.environ.get("AMICA_ALLOWED_TOOLS", "Read,Write,Edit")
+# "over" turn signal: when set, Claudia holds until the last user message ends with this word.
+# Prevents mid-sentence interrupts when the room is still talking.
+# Disabled by default — set AMICA_TURN_SIGNAL=over (or any word) to enable.
+_TURN_SIGNAL = os.environ.get("AMICA_TURN_SIGNAL", "").strip().lower()
+# Backend: "claude" (default, subprocess) or "local" (llama.cpp OpenAI-compat endpoint).
+_BACKEND = os.environ.get("AMICA_BACKEND", "claude").strip().lower()
+_LOCAL_URL = os.environ.get("AMICA_LOCAL_URL", "http://localhost:8080/v1/chat/completions")
+_LOCAL_MODEL = os.environ.get("AMICA_LOCAL_MODEL", "qwen3")
 
 # System prompt injected before every conversation
 _SYSTEM = os.environ.get(
@@ -60,6 +68,10 @@ _SYSTEM = os.environ.get(
     "These run silently. The audience sees the result in VS Code. You never narrate them.\n"
     "2. SPEECH (audible): your text reply — the ONLY thing TTS reads aloud. "
     "1-2 sentences MAX. Always. No markdown, no bullets, no hedging, no 'great question'.\n"
+    "SPEAK-FIRST RULE: the very first bytes of your response MUST be a spoken sentence. "
+    "Never open a turn with a tool call. Say something short ('On it.', 'Writing that now.', "
+    "'Good — let me put that on the page.') before any Write/Edit/Read action. "
+    "This keeps the audience with you while the file is being written.\n"
     "\n\n"
     "## OPENING — say this every session start\n"
     "On your very first reply, before anything else, announce the skill and open the interview:\n"
@@ -108,6 +120,97 @@ def _build_prompt(messages: list[dict]) -> str:
         elif role == "assistant":
             parts.append(f"Assistant: {content}")
     return "\n\n".join(parts)
+
+
+def _build_messages(messages: list[dict]) -> list[dict]:
+    """Build OpenAI-style message list with bridge system prompt for local backend."""
+    result = [{"role": "system", "content": _SYSTEM}]
+    for msg in messages:
+        role = msg.get("role", "")
+        content = str(msg.get("content") or "").strip()
+        if not content or role == "system":
+            continue
+        result.append({"role": role, "content": content})
+    return result
+
+
+def _strip_turn_signal(text: str) -> str:
+    """Remove the turn signal word from the end of a message."""
+    stripped = text.rstrip()
+    lower = stripped.lower()
+    if _TURN_SIGNAL and lower.endswith(_TURN_SIGNAL):
+        stripped = stripped[: len(stripped) - len(_TURN_SIGNAL)].rstrip(" ,.")
+    return stripped
+
+
+async def _listening_stream():
+    """Yield a short 'still listening' SSE response without spawning claude."""
+    chunk_id = f"chatcmpl-{uuid4().hex[:8]}"
+    created = int(time.time())
+
+    def _sse(data: dict) -> bytes:
+        return f"data: {json.dumps(data)}\n\n".encode()
+
+    def _chunk(delta: dict, finish_reason=None) -> dict:
+        return {
+            "id": chunk_id, "object": "chat.completion.chunk", "created": created,
+            "model": "claude-local",
+            "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
+        }
+
+    yield _sse(_chunk({"role": "assistant", "content": ""}))
+    yield _sse(_chunk({"content": "Still with you — say 'over' when you're done."}))
+    yield _sse(_chunk({}, "stop"))
+    yield b"data: [DONE]\n\n"
+
+
+async def _local_stream(messages: list[dict]):
+    """Stream from a local llama.cpp OpenAI-compatible endpoint."""
+    chunk_id = f"chatcmpl-{uuid4().hex[:8]}"
+    created = int(time.time())
+
+    def _sse(data: dict) -> bytes:
+        return f"data: {json.dumps(data)}\n\n".encode()
+
+    def _chunk(delta: dict, finish_reason=None) -> dict:
+        return {
+            "id": chunk_id, "object": "chat.completion.chunk", "created": created,
+            "model": "claude-local",
+            "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
+        }
+
+    yield _sse(_chunk({"role": "assistant", "content": ""}))
+    payload = json.dumps({
+        "model": _LOCAL_MODEL,
+        "messages": _build_messages(messages),
+        "stream": True,
+    }).encode()
+    req = urllib.request.Request(
+        _LOCAL_URL, data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+            for raw in resp:
+                line = raw.decode("utf-8", errors="replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                body = line[5:].strip()
+                if body == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(body)
+                    delta = obj.get("choices", [{}])[0].get("delta", {})
+                    text = delta.get("content", "")
+                    if text:
+                        yield _sse(_chunk({"content": text}))
+                except json.JSONDecodeError:
+                    pass
+    except Exception as exc:
+        yield _sse(_chunk({"content": f"\n[local backend error: {exc}]"}, "stop"))
+    yield _sse(_chunk({}, "stop"))
+    yield b"data: [DONE]\n\n"
 
 
 async def _claude_stream(prompt: str):
@@ -190,8 +293,33 @@ async def chat_completions(request: Request) -> Response:
     if not messages:
         return Response(content='{"error":"messages required"}', status_code=400, media_type="application/json")
 
-    prompt = _build_prompt(messages)
+    # "over" turn signal: hold until last user message ends with the signal word.
+    if _TURN_SIGNAL:
+        last_user = next(
+            (str(m.get("content") or "").rstrip().lower()
+             for m in reversed(messages) if m.get("role") == "user"),
+            "",
+        )
+        if not last_user.endswith(_TURN_SIGNAL):
+            return StreamingResponse(
+                _listening_stream(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        # Strip signal from last user message before processing
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "user":
+                messages[i] = {**messages[i], "content": _strip_turn_signal(str(messages[i].get("content") or ""))}
+                break
 
+    if _BACKEND == "local":
+        return StreamingResponse(
+            _local_stream(messages),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    prompt = _build_prompt(messages)
     return StreamingResponse(
         _claude_stream(prompt),
         media_type="text/event-stream",
