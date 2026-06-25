@@ -41,6 +41,18 @@ yarn-error.log*
 next-env.d.ts
 
 working/*
+
+# local tooling (Claude Code / CoderLM indexes)
+.claude/
+.coderlm/
+.infisical.json
+
+# large binary assets (VRM models, vtuber items)
+public/vrm/
+vtuber_items/
+
+# session notes
+docs/phase-state.md
 !working/.gitkeep
 
 # Sentry Config File
