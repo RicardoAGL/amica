@@ -5,7 +5,9 @@ if (typeof window !== "undefined") {
     const handler = ((old) => ({
       get: (_, name) => {
         function passf() {
-          old[name].apply(null, arguments);
+          if (typeof old[name] === 'function') {
+            old[name].apply(null, arguments);
+          }
         }
 
         function logf() {

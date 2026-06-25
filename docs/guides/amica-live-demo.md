@@ -20,7 +20,7 @@ Audience voice → Amica UI (localhost:3001)
                     │  spawns subprocess:
                     │      claude --dangerously-skip-permissions
                     │             --model claude-sonnet-4-6
-                    │             --allowedTools Read,Write,Edit,WebFetch
+                    │             --allowedTools Read,Write,Edit
                     │             -p "<prompt>"
                     ▼
             Claude Code Max (local auth, no API key)
@@ -150,7 +150,7 @@ Start engaged. You already know we're live.
 |---|---|---|
 | `AMICA_MODEL` | `claude-sonnet-4-6` | Model for every subprocess call |
 | `AMICA_TIMEOUT` | `120` | Seconds before a stuck call is killed |
-| `AMICA_ALLOWED_TOOLS` | `Read,Write,Edit,WebFetch` | No Bash — prevents shell exec via voice |
+| `AMICA_ALLOWED_TOOLS` | `Read,Write,Edit` | No Bash, no WebFetch — prevents shell exec and egress via voice |
 | `AMICA_SYSTEM_PROMPT` | (writing coach) | Override without editing code |
 
 Use Sonnet for demos. Opus burns tokens; each turn is a cold `claude -p` subprocess.

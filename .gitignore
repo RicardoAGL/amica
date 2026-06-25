@@ -23,6 +23,10 @@
 .DS_Store
 *.pem
 
+# local env overrides (contain secrets — never commit)
+*.env.local
+local-config.env
+
 # debug
 npm-debug.log*
 yarn-debug.log*
